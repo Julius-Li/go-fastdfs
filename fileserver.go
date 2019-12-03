@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go-fastdfs/conf"
+	"go-fastdfs/notify"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -16,7 +18,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	_ "net/http/pprof"
-	"net/smtp"
 	"net/url"
 	"os"
 	"os/signal"
@@ -28,10 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/astaxie/beego/httplib"
 	mapset "github.com/deckarep/golang-set"
@@ -65,8 +64,6 @@ var (
 	v           = flag.Bool("v", false, "display version")
 )
 var (
-	FileName                    string
-	ptr                         unsafe.Pointer
 	DOCKER_DIR                  = ""
 	STORE_DIR                   = STORE_DIR_NAME
 	CONF_DIR                    = CONF_DIR_NAME
@@ -122,81 +119,7 @@ const (
 	CONST_REMOME_Md5_FILE_NAME     = "removes.md5"
 	CONST_SMALL_FILE_SIZE          = 1024 * 1024
 	CONST_MESSAGE_CLUSTER_IP       = "Can only be called by the cluster ip or 127.0.0.1 or admin_ips(cfg.json),current ip:%s"
-	cfgJson                        = `{
-	"绑定端号": "端口",
-	"addr": ":8080",
-	"PeerID": "集群内唯一,请使用0-9的单字符，默认自动生成",
-	"peer_id": "%s",
-	"本主机地址": "本机http地址,默认自动生成(注意端口必须与addr中的端口一致），必段为内网，自动生成不为内网请自行修改，下同",
-	"host": "%s",
-	"集群": "集群列表,注意为了高可用，IP必须不能是同一个,同一不会自动备份，且不能为127.0.0.1,且必须为内网IP，默认自动生成",
-	"peers": ["%s"],
-	"组号": "用于区别不同的集群(上传或下载)与support_group_manage配合使用,带在下载路径中",
-	"group": "group1",
-	"是否支持按组（集群）管理,主要用途是Nginx支持多集群": "默认支持,不支持时路径为http://10.1.5.4:8080/action,支持时为http://10.1.5.4:8080/group(配置中的group参数)/action,action为动作名，如status,delete,sync等",
-	"support_group_manage": true,
-	"是否合并小文件": "默认不合并,合并可以解决inode不够用的情况（当前对于小于1M文件）进行合并",
-	"enable_merge_small_file": false,
-    "允许后缀名": "允许可以上传的文件后缀名，如jpg,jpeg,png等。留空允许所有。",
-	"extensions": [],
-	"重试同步失败文件的时间": "单位秒",
-	"refresh_interval": 1800,
-	"是否自动重命名": "默认不自动重命名,使用原文件名",
-	"rename_file": false,
-	"是否支持web上传,方便调试": "默认支持web上传",
-	"enable_web_upload": true,
-	"是否支持非日期路径": "默认支持非日期路径,也即支持自定义路径,需要上传文件时指定path",
-	"enable_custom_path": true,
-	"下载域名": "用于外网下载文件的域名,不包含http://",
-	"download_domain": "",
-	"场景列表": "当设定后，用户指的场景必项在列表中，默认不做限制(注意：如果想开启场景认功能，格式如下：'场景名:googleauth_secret' 如 default:N7IET373HB2C5M6D ",
-	"scenes": [],
-	"默认场景": "默认default",
-	"default_scene": "default",
-	"是否显示目录": "默认显示,方便调试用,上线时请关闭",
-	"show_dir": true,
-	"邮件配置": "",
-	"mail": {
-		"user": "abc@163.com",
-		"password": "abc",
-		"host": "smtp.163.com:25"
-	},
-	"告警接收邮件列表": "接收人数组",
-	"alarm_receivers": [],
-	"告警接收URL": "方法post,参数:subject,message",
-	"alarm_url": "",
-	"下载是否需带token": "真假",
-	"download_use_token": false,
-	"下载token过期时间": "单位秒",
-	"download_token_expire": 600,
-	"是否自动修复": "在超过1亿文件时出现性能问题，取消此选项，请手动按天同步，请查看FAQ",
-	"auto_repair": true,
-	"文件去重算法md5可能存在冲突，默认md5": "sha1|md5",
-	"file_sum_arithmetic": "md5",
-	"管理ip列表": "用于管理集的ip白名单,",
-	"admin_ips": ["127.0.0.1"],
-	"是否启用迁移": "默认不启用",
-	"enable_migrate": false,
-	"文件是否去重": "默认去重",
-	"enable_distinct_file": true,
-	"是否开启跨站访问": "默认开启",
-	"enable_cross_origin": true,
-	"是否开启Google认证，实现安全的上传、下载": "默认不开启",
-	"enable_google_auth": false,
-	"认证url": "当url不为空时生效,注意:普通上传中使用http参数 auth_token 作为认证参数, 在断点续传中通过HTTP头Upload-Metadata中的auth_token作为认证参数,认证流程参考认证架构图",
-	"auth_url": "",
-	"下载是否认证": "默认不认证(注意此选项是在auth_url不为空的情况下生效)",
-	"enable_download_auth": false,
-	"默认是否下载": "默认下载",
-	"default_download": true,
-	"本机是否只读": "默认可读可写",
-	"read_only": false,
-	"是否开启断点续传": "默认开启",
-	"enable_tus": true,
-	"同步单一文件超时时间（单位秒）": "默认为0,程序自动计算，在特殊情况下，自已设定",
-	"sync_timeout": 0
-}
-	`
+
 )
 
 type Server struct {
@@ -257,63 +180,11 @@ type FileResult struct {
 	Retcode int    `json:"retcode"`
 	Src     string `json:"src"`
 }
-type Mail struct {
-	User     string `json:"user"`
-	Password string `json:"password"`
-	Host     string `json:"host"`
-}
+
 type StatDateFileInfo struct {
 	Date      string `json:"date"`
 	TotalSize int64  `json:"totalSize"`
 	FileCount int64  `json:"fileCount"`
-}
-type GloablConfig struct {
-	Addr                 string   `json:"addr"`
-	Peers                []string `json:"peers"`
-	Group                string   `json:"group"`
-	RenameFile           bool     `json:"rename_file"`
-	ShowDir              bool     `json:"show_dir"`
-	Extensions           []string `json:"extensions"`
-	RefreshInterval      int      `json:"refresh_interval"`
-	EnableWebUpload      bool     `json:"enable_web_upload"`
-	DownloadDomain       string   `json:"download_domain"`
-	EnableCustomPath     bool     `json:"enable_custom_path"`
-	Scenes               []string `json:"scenes"`
-	AlarmReceivers       []string `json:"alarm_receivers"`
-	DefaultScene         string   `json:"default_scene"`
-	Mail                 Mail     `json:"mail"`
-	AlarmUrl             string   `json:"alarm_url"`
-	DownloadUseToken     bool     `json:"download_use_token"`
-	DownloadTokenExpire  int      `json:"download_token_expire"`
-	QueueSize            int      `json:"queue_size"`
-	AutoRepair           bool     `json:"auto_repair"`
-	Host                 string   `json:"host"`
-	FileSumArithmetic    string   `json:"file_sum_arithmetic"`
-	PeerId               string   `json:"peer_id"`
-	SupportGroupManage   bool     `json:"support_group_manage"`
-	AdminIps             []string `json:"admin_ips"`
-	EnableMergeSmallFile bool     `json:"enable_merge_small_file"`
-	EnableMigrate        bool     `json:"enable_migrate"`
-	EnableDistinctFile   bool     `json:"enable_distinct_file"`
-	ReadOnly             bool     `json:"read_only"`
-	EnableCrossOrigin    bool     `json:"enable_cross_origin"`
-	EnableGoogleAuth     bool     `json:"enable_google_auth"`
-	AuthUrl              string   `json:"auth_url"`
-	EnableDownloadAuth   bool     `json:"enable_download_auth"`
-	DefaultDownload      bool     `json:"default_download"`
-	EnableTus            bool     `json:"enable_tus"`
-	SyncTimeout          int64    `json:"sync_timeout"`
-	EnableFsnotify       bool     `json:"enable_fsnotify"`
-	EnableDiskCache      bool     `json:"enable_disk_cache"`
-	ConnectTimeout       bool     `json:"connect_timeout"`
-	ReadTimeout          int      `json:"read_timeout"`
-	WriteTimeout         int      `json:"write_timeout"`
-	IdleTimeout          int      `json:"idle_timeout"`
-	ReadHeaderTimeout    int      `json:"read_header_timeout"`
-	SyncWorker           int      `json:"sync_worker"`
-	UploadWorker         int      `json:"upload_worker"`
-	UploadQueueSize      int      `json:"upload_queue_size"`
-	RetryCount           int      `json:"retry_count"`
 }
 type FileInfoResult struct {
 	Name    string `json:"name"`
@@ -383,34 +254,8 @@ func NewServer() *Server {
 	return server
 }
 
-func Config() *GloablConfig {
-	return (*GloablConfig)(atomic.LoadPointer(&ptr))
-}
-func ParseConfig(filePath string) {
-	var (
-		data []byte
-	)
-	if filePath == "" {
-		data = []byte(strings.TrimSpace(cfgJson))
-	} else {
-		file, err := os.Open(filePath)
-		if err != nil {
-			panic(fmt.Sprintln("open file path:", filePath, "error:", err))
-		}
-		defer file.Close()
-		FileName = filePath
-		data, err = ioutil.ReadAll(file)
-		if err != nil {
-			panic(fmt.Sprintln("file path:", filePath, " read all error:", err))
-		}
-	}
-	var c GloablConfig
-	if err := json.Unmarshal(data, &c); err != nil {
-		panic(fmt.Sprintln("file path:", filePath, "json unmarshal error:", err))
-	}
-	log.Info(c)
-	atomic.StorePointer(&ptr, unsafe.Pointer(&c))
-	log.Info("config parse success")
+func Config() *conf.Global {
+	return conf.DefaultGlobal()
 }
 func (this *Server) BackUpMetaDataByDate(date string) {
 	defer func() {
@@ -652,7 +497,7 @@ func (this *Server) WatchFilesChange() {
 				continue
 			} else {
 				//if c.op == watcher.Remove.String() {
-				//	req := httplib.Post(fmt.Sprintf("%s%s?md5=%s", this.host, this.getRequestURI("delete"), c.Md5))
+				//	req := httplib.Post(fmt.Sprintf("%s%s?md5=%s", this.host, getRequestURI("delete"), c.Md5))
 				//	req.Param("md5", c.Md5)
 				//	req.SetTimeout(time.Second*5, time.Second*10)
 				//	log.Infof(req.String())
@@ -1469,7 +1314,7 @@ func (this *Server) postFileToPeer(fileInfo *FileInfo) {
 				continue
 			}
 		}
-		postURL = fmt.Sprintf("%s%s", peer, this.getRequestURI("syncfile_info"))
+		postURL = fmt.Sprintf("%s%s", peer, getRequestURI("syncfile_info"))
 		b := httplib.Post(postURL)
 		b.SetTimeout(time.Second*30, time.Second*30)
 		if data, err = json.Marshal(fileInfo); err != nil {
@@ -1586,7 +1431,7 @@ func (this *Server) checkPeerFileExist(peer string, md5sum string, fpath string)
 		err      error
 		fileInfo FileInfo
 	)
-	req := httplib.Post(fmt.Sprintf("%s%s?md5=%s", peer, this.getRequestURI("check_file_exist"), md5sum))
+	req := httplib.Post(fmt.Sprintf("%s%s?md5=%s", peer, getRequestURI("check_file_exist"), md5sum))
 	req.Param("path", fpath)
 	req.Param("md5", md5sum)
 	req.SetTimeout(time.Second*5, time.Second*10)
@@ -1736,7 +1581,7 @@ func (this *Server) Sync(w http.ResponseWriter, r *http.Request) {
 	}
 	if inner != "1" {
 		for _, peer := range Config().Peers {
-			req := httplib.Post(peer + this.getRequestURI("sync"))
+			req := httplib.Post(peer + getRequestURI("sync"))
 			req.Param("force", force)
 			req.Param("inner", "1")
 			req.Param("date", date)
@@ -2107,7 +1952,7 @@ func (this *Server) RemoveFile(w http.ResponseWriter, r *http.Request) {
 	if inner != "1" {
 		for _, peer := range Config().Peers {
 			delFile := func(peer string, md5sum string, fileInfo *FileInfo) {
-				delUrl = fmt.Sprintf("%s%s", peer, this.getRequestURI("delete"))
+				delUrl = fmt.Sprintf("%s%s", peer, getRequestURI("delete"))
 				req := httplib.Post(delUrl)
 				req.Param("md5", md5sum)
 				req.Param("inner", "1")
@@ -2155,7 +2000,7 @@ func (this *Server) RemoveFile(w http.ResponseWriter, r *http.Request) {
 	result.Message = "fail remove"
 	w.Write([]byte(this.util.JsonEncodePretty(result)))
 }
-func (this *Server) getRequestURI(action string) string {
+func  getRequestURI(action string) string {
 	var (
 		uri string
 	)
@@ -2559,23 +2404,7 @@ func (this *Server) SaveSmallFile(fileInfo *FileInfo) error {
 	}
 	return nil
 }
-func (this *Server) SendToMail(to, subject, body, mailtype string) error {
-	host := Config().Mail.Host
-	user := Config().Mail.User
-	password := Config().Mail.Password
-	hp := strings.Split(host, ":")
-	auth := smtp.PlainAuth("", user, password, hp[0])
-	var contentType string
-	if mailtype == "html" {
-		contentType = "Content-Type: text/" + mailtype + "; charset=UTF-8"
-	} else {
-		contentType = "Content-Type: text/plain" + "; charset=UTF-8"
-	}
-	msg := []byte("To: " + to + "\r\nFrom: " + user + ">\r\nSubject: " + "\r\n" + contentType + "\r\n\r\n" + body)
-	sendTo := strings.Split(to, ";")
-	err := smtp.SendMail(host, auth, user, sendTo, msg)
-	return err
-}
+
 func (this *Server) BenchMark(w http.ResponseWriter, r *http.Request) {
 	t := time.Now()
 	batch := new(leveldb.Batch)
@@ -2626,7 +2455,7 @@ func (this *Server) RepairStatWeb(w http.ResponseWriter, r *http.Request) {
 	}
 	if inner != "1" {
 		for _, peer := range Config().Peers {
-			req := httplib.Post(peer + this.getRequestURI("repair_stat"))
+			req := httplib.Post(peer + getRequestURI("repair_stat"))
 			req.Param("inner", "1")
 			req.Param("date", date)
 			if _, err := req.String(); err != nil {
@@ -2910,7 +2739,7 @@ func (this *Server) AutoRepair(forceRepair bool) {
 		}()
 		Update := func(peer string, dateStat StatDateFileInfo) {
 			//从远端拉数据过来
-			req := httplib.Get(fmt.Sprintf("%s%s?date=%s&force=%s", peer, this.getRequestURI("sync"), dateStat.Date, "1"))
+			req := httplib.Get(fmt.Sprintf("%s%s?date=%s&force=%s", peer, getRequestURI("sync"), dateStat.Date, "1"))
 			req.SetTimeout(time.Second*5, time.Second*5)
 			if _, err = req.String(); err != nil {
 				log.Error(err)
@@ -2918,7 +2747,7 @@ func (this *Server) AutoRepair(forceRepair bool) {
 			log.Info(fmt.Sprintf("syn file from %s date %s", peer, dateStat.Date))
 		}
 		for _, peer := range Config().Peers {
-			req := httplib.Post(fmt.Sprintf("%s%s", peer, this.getRequestURI("stat")))
+			req := httplib.Post(fmt.Sprintf("%s%s", peer, getRequestURI("stat")))
 			req.Param("inner", "1")
 			req.SetTimeout(time.Second*5, time.Second*15)
 			if err = req.ToJSON(&dateStats); err != nil {
@@ -2936,7 +2765,7 @@ func (this *Server) AutoRepair(forceRepair bool) {
 						if v.(int64) != dateStat.FileCount || forceRepair {
 							//不相等,找差异
 							//TODO
-							req := httplib.Post(fmt.Sprintf("%s%s", peer, this.getRequestURI("get_md5s_by_date")))
+							req := httplib.Post(fmt.Sprintf("%s%s", peer, getRequestURI("get_md5s_by_date")))
 							req.SetTimeout(time.Second*15, time.Second*60)
 							req.Param("date", dateStat.Date)
 							if md5s, err = req.String(); err != nil {
@@ -2949,7 +2778,7 @@ func (this *Server) AutoRepair(forceRepair bool) {
 							remoteSet = this.util.StrToMapSet(md5s, ",")
 							allSet = localSet.Union(remoteSet)
 							md5s = this.util.MapSetToStr(allSet.Difference(localSet), ",")
-							req = httplib.Post(fmt.Sprintf("%s%s", peer, this.getRequestURI("receive_md5s")))
+							req = httplib.Post(fmt.Sprintf("%s%s", peer, getRequestURI("receive_md5s")))
 							req.SetTimeout(time.Second*15, time.Second*60)
 							req.Param("md5s", md5s)
 							req.String()
@@ -3082,7 +2911,7 @@ func (this *Server) CheckClusterStatus() {
 			req     *httplib.BeegoHTTPRequest
 		)
 		for _, peer := range Config().Peers {
-			req = httplib.Get(fmt.Sprintf("%s%s", peer, this.getRequestURI("status")))
+			req = httplib.Get(fmt.Sprintf("%s%s", peer, getRequestURI("status")))
 			req.SetTimeout(time.Second*5, time.Second*5)
 			err = req.ToJSON(&status)
 			if err != nil || status.Status != "ok" {
@@ -3093,7 +2922,7 @@ func (this *Server) CheckClusterStatus() {
 					} else {
 						body = fmt.Sprintf("%s\nserver:%s\n", subject, peer)
 					}
-					if err = this.SendToMail(to, subject, body, "text"); err != nil {
+					if err = notify.SendToMail(to, subject, body, "text"); err != nil {
 						log.Error(err)
 					}
 				}
@@ -3137,7 +2966,7 @@ func (this *Server) Reload(w http.ResponseWriter, r *http.Request) {
 	var (
 		err     error
 		data    []byte
-		cfg     GloablConfig
+		cfg     conf.Global
 		action  string
 		cfgjson string
 		result  JsonResult
@@ -3186,7 +3015,7 @@ func (this *Server) Reload(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(this.util.JsonEncodePretty(result)))
 			return
 		}
-		ParseConfig(CONST_CONF_FILE_NAME)
+		conf.LoadDefaultGlobal(CONST_CONF_FILE_NAME)
 		this.initComponent(true)
 		result.Status = "ok"
 		w.Write([]byte(this.util.JsonEncodePretty(result)))
@@ -3230,7 +3059,7 @@ func (this *Server) BackUp(w http.ResponseWriter, r *http.Request) {
 		if inner != "1" {
 			for _, peer := range Config().Peers {
 				backUp := func(peer string, date string) {
-					url = fmt.Sprintf("%s%s", peer, this.getRequestURI("backup"))
+					url = fmt.Sprintf("%s%s", peer, getRequestURI("backup"))
 					req := httplib.Post(url)
 					req.Param("date", date)
 					req.Param("inner", "1")
@@ -3665,7 +3494,7 @@ func init() {
 			ip = server.util.GetPulicIP()
 		}
 		peer := "http://" + ip + ":8080"
-		cfg := fmt.Sprintf(cfgJson, peerId, peer, peer)
+		cfg := fmt.Sprintf(conf.JSON, peerId, peer, peer)
 		server.util.WriteFile(CONST_CONF_FILE_NAME, cfg)
 	}
 	if logger, err := log.LoggerFromConfigAsBytes([]byte(logConfigStr)); err != nil {
@@ -3679,7 +3508,7 @@ func init() {
 	} else {
 		log.Error(err.Error())
 	}
-	ParseConfig(CONST_CONF_FILE_NAME)
+	conf.LoadDefaultGlobal(CONST_CONF_FILE_NAME)
 	if Config().QueueSize == 0 {
 		Config().QueueSize = CONST_QUEUE_SIZE
 	}
@@ -4208,6 +4037,4 @@ func (this *Server) Main() {
 	log.Error(err)
 	fmt.Println(err)
 }
-func main() {
-	server.Main()
-}
+
